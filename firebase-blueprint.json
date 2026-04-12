@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and role information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email", "description": "User email address" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "User role for RBAC" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "MissionScore": {
+      "title": "Mission Score",
+      "description": "Historical mission performance data",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user" },
+        "userName": { "type": "string", "description": "Name of the user" },
+        "score": { "type": "number", "description": "Final score achieved" },
+        "timeTaken": { "type": "number", "description": "Time taken in seconds" },
+        "success": { "type": "boolean", "description": "Whether the mission was successful" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the mission ended" }
+      },
+      "required": ["userId", "score", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user profiles"
+    },
+    "/scores/{scoreId}": {
+      "schema": "MissionScore",
+      "description": "Collection of mission results"
+    }
+  }
+}

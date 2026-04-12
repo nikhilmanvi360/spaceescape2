@@ -1,0 +1,5 @@
+{
+  "name": "Mission Override: Space Escape",
+  "description": "An interactive web-based escape room game where you act as a space engineer fixing a failing spaceship.",
+  "requestFramePermissions": []
+}
