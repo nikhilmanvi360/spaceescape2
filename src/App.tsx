@@ -19,26 +19,42 @@ export default function App() {
 
   // Auth listener
   useEffect(() => {
-    // ==== MOCKED LOGIN FOR LOCAL DEV ====
-    const handleMockLogin = () => {
-      setUser({ uid: 'mock-123', email: 'local@pilot.com', displayName: 'Local Pilot' } as User);
-      setUserRole('admin'); 
-    };
-    const handleMockLogout = () => {
-      setUser(null);
-      setUserRole(null);
-    };
-    
-    window.addEventListener('mock-login', handleMockLogin);
-    window.addEventListener('mock-logout', handleMockLogout);
-    
-    // Set initial loading to false
-    setLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
+      if (firebaseUser) {
+        // Check/Create user profile in Firestore
+        const userRef = doc(db, 'users', firebaseUser.uid);
+        const userSnap = await getDoc(userRef);
 
-    return () => {
-      window.removeEventListener('mock-login', handleMockLogin);
-      window.removeEventListener('mock-logout', handleMockLogout);
-    };
+        if (!userSnap.exists()) {
+          const isDefaultAdmin = firebaseUser.email === 'nikhilmanvi360@gmail.com';
+          const role = isDefaultAdmin ? 'admin' : 'user';
+          const userData = {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            displayName: firebaseUser.displayName,
+            role: role,
+            createdAt: serverTimestamp()
+          };
+          await setDoc(userRef, userData);
+          setUserRole(role);
+        } else {
+          const data = userSnap.data();
+          const isDefaultAdmin = firebaseUser.email === 'nikhilmanvi360@gmail.com';
+          if (isDefaultAdmin && data.role !== 'admin') {
+            await updateDoc(userRef, { role: 'admin' });
+            setUserRole('admin');
+          } else {
+            setUserRole(data.role);
+          }
+        }
+      } else {
+        setUserRole(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   // Check for existing game on mount
@@ -59,8 +75,22 @@ export default function App() {
     setGameState('finished');
     localStorage.removeItem(STORAGE_KEY);
 
-    // Save to Firestore (MOCKED)
-    console.log("Mock saved score to Firestore:", { score, timeTaken, success, hintsUsed });
+    // Save to Firestore
+    if (user) {
+      try {
+        await addDoc(collection(db, 'scores'), {
+          userId: user.uid,
+          userName: user.displayName || 'Unknown Pilot',
+          score,
+          timeTaken,
+          success,
+          hintsUsed,
+          timestamp: serverTimestamp()
+        });
+      } catch (error) {
+        console.error("Failed to save score:", error);
+      }
+    }
   };
 
   const handleRestart = () => {

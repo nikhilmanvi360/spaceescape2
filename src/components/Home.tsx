@@ -28,17 +28,16 @@ export const Home: React.FC<HomeProps> = ({ onStart, onOpenAdmin, user, userRole
   const fetchLeaderboard = async () => {
     setLoadingLeaderboard(true);
     try {
-      // MOCK LEADERBOARD FOR LOCAL DEV
-      setTimeout(() => {
-        setLeaderboard([
-          { id: '1', userName: 'Commander Shepard', score: 9500, timeTaken: 120, timestamp: {} as any },
-          { id: '2', userName: 'Ellen Ripley', score: 9200, timeTaken: 135, timestamp: {} as any },
-          { id: '3', userName: 'Local Pilot', score: 8900, timeTaken: 150, timestamp: {} as any },
-        ]);
-        setLoadingLeaderboard(false);
-      }, 500);
+      const q = query(collection(db, 'scores'), orderBy('score', 'desc'), limit(5));
+      const querySnapshot = await getDocs(q);
+      const records: ScoreRecord[] = [];
+      querySnapshot.forEach((doc) => {
+        records.push({ id: doc.id, ...doc.data() } as ScoreRecord);
+      });
+      setLeaderboard(records);
     } catch (error) {
       console.error("Failed to fetch leaderboard:", error);
+    } finally {
       setLoadingLeaderboard(false);
     }
   };
@@ -49,16 +48,14 @@ export const Home: React.FC<HomeProps> = ({ onStart, onOpenAdmin, user, userRole
 
   const handleLogin = async () => {
     try {
-      // MOCK LOGIN FOR LOCAL DEV
-      window.dispatchEvent(new CustomEvent('mock-login'));
+      await signInWithPopup(auth, googleProvider);
     } catch (error) {
       console.error("Login failed:", error);
     }
   };
 
   const handleLogout = async () => {
-    // MOCK LOGOUT FOR LOCAL DEV
-    window.dispatchEvent(new CustomEvent('mock-logout'));
+    await signOut(auth);
   };
 
   return (
