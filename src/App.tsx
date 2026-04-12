@@ -22,7 +22,7 @@ export default function App() {
     // ==== MOCKED LOGIN FOR LOCAL DEV ====
     const handleMockLogin = () => {
       setUser({ uid: 'mock-123', email: 'local@pilot.com', displayName: 'Local Pilot' } as User);
-      setUserRole('user'); 
+      setUserRole('admin'); 
     };
     const handleMockLogout = () => {
       setUser(null);
