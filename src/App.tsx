@@ -107,8 +107,8 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center font-mono text-primary">
-        <div className="animate-pulse tracking-[0.5em] uppercase">Initializing Neural Link...</div>
+      <div className="min-h-screen bg-background flex items-center justify-center font-mono text-primary font-bold">
+        <div className="animate-pulse tracking-[0.2em] uppercase">Booting Engineering Mainframe...</div>
       </div>
     );
   }
@@ -118,19 +118,21 @@ export default function App() {
       {/* CRT Effects Overlay */}
       <div className="crt-overlay" />
       <div className="scanline" />
-      
+      <div className="crt-vignette" />
+      <div className="noise-bg" />
+
       <main className="relative z-10">
         {gameState === 'home' && (
-          <Home 
-            onStart={handleStart} 
+          <Home
+            onStart={handleStart}
             onOpenAdmin={handleOpenAdmin}
-            user={user} 
-            userRole={userRole} 
+            user={user}
+            userRole={userRole}
           />
         )}
         {gameState === 'playing' && (
-          <Dashboard 
-            onComplete={handleComplete} 
+          <Dashboard
+            onComplete={handleComplete}
             onExit={() => setGameState('home')}
             onOpenAdmin={handleOpenAdmin}
             userRole={userRole}
@@ -138,12 +140,12 @@ export default function App() {
         )}
         {gameState === 'admin' && <AdminDashboard onBack={() => setGameState('home')} />}
         {gameState === 'finished' && finalData && (
-          <Result 
-            score={finalData.score} 
-            timeTaken={finalData.timeTaken} 
-            success={finalData.success} 
+          <Result
+            score={finalData.score}
+            timeTaken={finalData.timeTaken}
+            success={finalData.success}
             hintsUsed={finalData.hintsUsed}
-            onRestart={handleRestart} 
+            onRestart={handleRestart}
           />
         )}
       </main>

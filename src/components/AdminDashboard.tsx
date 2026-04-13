@@ -170,6 +170,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBack }) => {
     }
   };
 
+  const handleIntervention = async (uid: string, command: 'SABOTAGE' | 'SUPPORT' | 'GLITCH') => {
+    try {
+      await updateDoc(doc(db, 'users', uid), { pendingCommand: command });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${uid}/intervention`);
+    }
+  };
+
   const handleExportCSV = () => {
     const headers = ['Pilot', 'Score', 'Time (s)', 'Status', 'Hints', 'Timestamp'];
     const rows = scores.map(s => [
@@ -639,6 +647,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBack }) => {
                       <div className="h-1 w-full bg-accent/10 rounded-full overflow-hidden">
                         <div className="h-full bg-accent" style={{ width: `${u.currentMission?.progress}%` }} />
                       </div>
+                    </div>
+                    <div className="mt-4 pt-4 border-t border-accent/10 flex gap-2">
+                      <Button 
+                        size="sm" 
+                        onClick={() => handleIntervention(u.uid, 'SABOTAGE')}
+                        className="flex-1 text-[8px] bg-destructive/10 text-destructive border-destructive/20 hover:bg-destructive uppercase tracking-widest rounded-none h-7"
+                      >
+                        Sabotage
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        onClick={() => handleIntervention(u.uid, 'GLITCH')}
+                        className="flex-1 text-[8px] bg-accent/10 text-accent border-accent/20 hover:bg-accent uppercase tracking-widest rounded-none h-7"
+                      >
+                        Glitch
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        onClick={() => handleIntervention(u.uid, 'SUPPORT')}
+                        className="flex-1 text-[8px] bg-primary/10 text-primary border-primary/20 hover:bg-primary uppercase tracking-widest rounded-none h-7"
+                      >
+                        Support
+                      </Button>
                     </div>
                     <div className="text-[8px] text-muted-foreground/40 text-right mt-2">
                       Last Signal: {new Date(typeof u.lastActive.toMillis === 'function' ? u.lastActive.toMillis() : (u.lastActive as any).seconds * 1000).toLocaleTimeString()}

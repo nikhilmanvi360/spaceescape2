@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Timer, 
-  Activity, 
-  Zap, 
-  Wind, 
-  Navigation, 
-  AlertTriangle, 
-  CheckCircle2, 
+import {
+  Timer,
+  Activity,
+  Zap,
+  Wind,
+  Navigation,
+  AlertTriangle,
+  CheckCircle2,
   HelpCircle,
   ChevronRight,
   ChevronLeft,
@@ -17,7 +17,10 @@ import {
   CheckCircle,
   ShieldAlert,
   Cpu,
-  LayoutDashboard
+  LayoutDashboard,
+  Volume2,
+  VolumeX,
+  ZapOff
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,7 +28,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { GAME_DATA, Question } from '@/src/data/questions';
 
@@ -61,39 +64,49 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
   const [completedQuestionIds, setCompletedQuestionIds] = useState<string[]>(savedState?.completedQuestionIds ?? []);
   const [hintsUsedForQuestion, setHintsUsedForQuestion] = useState<string[]>(savedState?.hintsUsedForQuestion ?? []);
   const [isGodMode, setIsGodMode] = useState(false);
-  
+
   const [answer, setAnswer] = useState('');
   const [isDecryptingHint, setIsDecryptingHint] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [activeAlert, setActiveAlert] = useState<string | null>(null);
-  
+
   const [systemStatus, setSystemStatus] = useState({
-    oxygen: 40,
-    fuel: 30,
-    navigation: 20
+    oxygen: savedState?.systemStatus?.oxygen ?? 100,
+    fuel: savedState?.systemStatus?.fuel ?? 100,
+    navigation: savedState?.systemStatus?.navigation ?? 100
   });
+
+  const [emergency, setEmergency] = useState<{ active: boolean, code: string, type: string } | null>(null);
+  const [emergencyInput, setEmergencyInput] = useState('');
+  const [isGlitching, setIsGlitching] = useState(false);
+  const [maintenanceTarget, setMaintenanceTarget] = useState<'oxygen' | 'fuel' | 'navigation' | null>(null);
+  const [isMuted, setIsMuted] = useState(true);
+
+  // Audio Refs
+  const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
+  const ambientRef = useRef<HTMLAudioElement | null>(null);
 
   const startTime = useRef(savedState?.startTime ?? Date.now());
 
   const currentRound = GAME_DATA[currentRoundIdx];
   const currentQuestion = currentRound.questions[currentQuestionIdx];
-  
+
   const totalQuestions = useMemo(() => GAME_DATA.reduce((acc, round) => acc + round.questions.length, 0), []);
   const progress = (completedQuestionIds.length / totalQuestions) * 100;
 
   const canGoBack = useMemo(() => {
     let prevRIdx = currentRoundIdx;
     let prevQIdx = currentQuestionIdx - 1;
-    
+
     if (prevQIdx < 0) {
       prevRIdx -= 1;
       if (prevRIdx >= 0) {
         prevQIdx = GAME_DATA[prevRIdx].questions.length - 1;
       }
     }
-    
+
     if (prevRIdx < 0) return false;
-    
+
     const prevQuestionId = GAME_DATA[prevRIdx].questions[prevQIdx].id;
     return completedQuestionIds.includes(prevQuestionId);
   }, [currentRoundIdx, currentQuestionIdx, completedQuestionIds]);
@@ -101,14 +114,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
   const handlePrevious = () => {
     let prevRIdx = currentRoundIdx;
     let prevQIdx = currentQuestionIdx - 1;
-    
+
     if (prevQIdx < 0) {
       prevRIdx -= 1;
       if (prevRIdx >= 0) {
         prevQIdx = GAME_DATA[prevRIdx].questions.length - 1;
       }
     }
-    
+
     if (prevRIdx >= 0) {
       selectQuestion(prevRIdx, prevQIdx);
     }
@@ -124,6 +137,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
       hintsUsed,
       completedQuestionIds,
       hintsUsedForQuestion,
+      systemStatus,
       startTime: startTime.current
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -153,49 +167,155 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
     return () => clearTimeout(timeout);
   }, [currentRoundIdx, currentQuestionIdx, score, timeLeft, hintsUsed, completedQuestionIds, hintsUsedForQuestion, progress]);
 
-  // Timer & Status Logic
+  // Audio Initialization & Control (Upgrade 4)
   useEffect(() => {
-    if (isGodMode) return;
+    const sounds = {
+      click: '/chaloo.mp3',
+      success: '/aji-mangal.mp3',
+      error: '/chicken-on-tree-screaming.mp3',
+      alarm: '/999-social-credit-siren.mp3',
+      hum: 'https://assets.mixkit.co/sfx/preview/mixkit-futuristic-computer-hum-2139.mp3'
+    };
+
+    Object.entries(sounds).forEach(([key, url]) => {
+      const audio = new Audio(url);
+      audio.volume = key === 'hum' ? 0.3 : 0.5;
+      if (key === 'hum' || key === 'alarm') audio.loop = true;
+      audioRefs.current[key] = audio;
+    });
+
+    return () => {
+      Object.values(audioRefs.current).forEach(a => {
+        a.pause();
+        a.currentTime = 0;
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isMuted) {
+      Object.values(audioRefs.current).forEach(a => a.muted = true);
+    } else {
+      Object.values(audioRefs.current).forEach(a => a.muted = false);
+      audioRefs.current.hum?.play().catch(console.error);
+    }
+  }, [isMuted]);
+
+  useEffect(() => {
+    const alarm = audioRefs.current.alarm;
+    if (!alarm) return;
+    if (emergency) {
+      alarm.play().catch(console.error);
+    } else {
+      alarm.pause();
+      alarm.currentTime = 0;
+    }
+  }, [emergency]);
+
+  const playSound = (sound: string) => {
+    if (isMuted || !audioRefs.current[sound]) return;
+    const a = audioRefs.current[sound];
+    a.currentTime = 0;
+    a.play().catch(console.error);
+  };
+
+  // Timer & Status Decay Logic
+  useEffect(() => {
+    if (isGodMode || timeLeft === 0) return;
+    
     const interval = setInterval(() => {
       setTimeLeft((prev: number) => Math.max(0, prev - 1));
 
-      // Random Alerts
-      if (Math.random() < 0.01 && !activeAlert) {
-        const alerts = [
-          "OXYGEN LEVEL CRITICAL",
-          "NAVIGATION FAILURE DETECTED",
-          "FUEL LEAK IN SECTOR 4",
-          "CORE TEMPERATURE RISING",
-          "UNAUTHORIZED ACCESS ATTEMPT"
-        ];
-        setActiveAlert(alerts[Math.floor(Math.random() * alerts.length)]);
-        setTimeout(() => setActiveAlert(null), 5000);
+      // Status Decay (Upgrade 3)
+      setSystemStatus(prev => ({
+        oxygen: Math.max(0, prev.oxygen - 0.05),
+        fuel: Math.max(0, prev.fuel - 0.04),
+        navigation: Math.max(0, prev.navigation - 0.03)
+      }));
+
+      // Random Alerts -> Interactive Emergency (Upgrade 1)
+      if (Math.random() < 0.005 && !emergency && !activeAlert) {
+        triggerEmergency("SYSTEM INSTABILITY DETECTED");
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [activeAlert]);
+  }, [isGodMode, timeLeft, emergency, activeAlert]);
 
-  // System Status Mapping
+  // Admin Command Listener (Upgrade 5)
   useEffect(() => {
-    // R1 -> Navigation (0-100)
-    // R2 -> Oxygen + Fuel (0-100)
-    // R3 -> Core (0-100)
-    
-    const r1Questions = GAME_DATA[0].questions.length;
-    const r2Questions = GAME_DATA[1].questions.length;
-    const r3Questions = GAME_DATA[2].questions.length;
+    const user = auth.currentUser;
+    if (!user) return;
 
+    const unsubscribe = onSnapshot(doc(db, 'users', user.uid), (snapshot) => {
+      const data = snapshot.data();
+      if (data?.pendingCommand) {
+        handleAdminCommand(data.pendingCommand);
+        // Clear command after handling
+        updateDoc(doc(db, 'users', user.uid), { pendingCommand: null });
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleAdminCommand = (command: string) => {
+    switch (command) {
+      case 'SABOTAGE':
+        triggerEmergency("UNIDENTIFIED SYSTEM ANOMALY DETECTED");
+        break;
+      case 'SUPPORT':
+        setSystemStatus({ oxygen: 100, fuel: 100, navigation: 100 });
+        setFeedback({ type: 'success', message: 'EXTERNAL SYSTEM RECOVERY INITIATED' });
+        setTimeout(() => setFeedback(null), 3000);
+        break;
+      case 'GLITCH':
+        setIsGlitching(true);
+        setTimeout(() => setIsGlitching(false), 10000);
+        break;
+      default:
+        break;
+    }
+  };
+
+  const triggerEmergency = (type: string) => {
+    const codes = ["VX-4", "CORE-7", "BYPASS-0", "DELTA-9", "SYNC-X"];
+    const code = codes[Math.floor(Math.random() * codes.length)];
+    setEmergency({ active: true, code, type });
+    setEmergencyInput('');
+  };
+
+  const handleEmergencySubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (emergencyInput.toUpperCase() === emergency?.code) {
+      setEmergency(null);
+      playSound('success');
+      setFeedback({ type: 'success', message: 'EMERGENCY BYPASS SUCCESSFUL' });
+      setTimeout(() => setFeedback(null), 2000);
+    } else {
+      playSound('error');
+      setFeedback({ type: 'error', message: 'INVALID BYPASS CODE' });
+      setTimeout(() => setFeedback(null), 1000);
+    }
+  };
+
+  const handleMaintenance = (target: 'oxygen' | 'fuel' | 'navigation') => {
+    playSound('success');
+    setSystemStatus(prev => ({
+      ...prev,
+      [target]: Math.min(100, prev[target] + 25)
+    }));
+    setFeedback({ type: 'success', message: `${target.toUpperCase()} REPLENISHED` });
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
+  // System Status Mapping - Round Buffs
+  useEffect(() => {
     const r1Completed = completedQuestionIds.filter(id => id.startsWith('1-')).length;
     const r2Completed = completedQuestionIds.filter(id => id.startsWith('2-')).length;
-    const r3Completed = completedQuestionIds.filter(id => id.startsWith('3-')).length;
 
-    setSystemStatus({
-      navigation: Math.min(100, 20 + (r1Completed / r1Questions) * 80),
-      oxygen: Math.min(100, 40 + (r2Completed / r2Questions) * 60),
-      fuel: Math.min(100, 30 + (r2Completed / r2Questions) * 70),
-      // Core is implicit in R3 progress
-    });
+    if (r1Completed > 0) setSystemStatus(prev => ({ ...prev, navigation: Math.min(100, prev.navigation + 2) }));
+    if (r2Completed > 0) setSystemStatus(prev => ({ ...prev, oxygen: Math.min(100, prev.oxygen + 2), fuel: Math.min(100, prev.fuel + 2) }));
   }, [completedQuestionIds]);
 
   // Game over check
@@ -233,8 +353,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
     let isCorrect = false;
 
     if (currentQuestion.type === 'code' && currentQuestion.validAnswers) {
-      isCorrect = currentQuestion.validAnswers.some(valid => 
-        userAnswer.includes(valid.toLowerCase().trim()) || 
+      isCorrect = currentQuestion.validAnswers.some(valid =>
+        userAnswer.includes(valid.toLowerCase().trim()) ||
         valid.toLowerCase().trim().includes(userAnswer)
       );
     } else if (currentQuestion.correctAnswer) {
@@ -247,13 +367,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
         setScore(prev => prev + 10);
         setCompletedQuestionIds(prev => [...prev, currentQuestion.id]);
       }
-      
+
+      playSound('success');
       setFeedback({ type: 'success', message: 'SYSTEM OVERRIDE SUCCESSFUL' });
-      
+
       setTimeout(() => {
         setFeedback(null);
         setAnswer('');
-        
+
         // Auto-advance logic
         if (currentQuestionIdx < currentRound.questions.length - 1) {
           setCurrentQuestionIdx(prev => prev + 1);
@@ -267,8 +388,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
         }
       }, 1500);
     } else {
+      playSound('error');
       let errorMessage = 'ERROR: INVALID OVERRIDE CODE';
-      
+
       if (currentQuestion.type === 'code') {
         if (userAnswer === '') {
           errorMessage = 'ERROR: EMPTY BUFFER';
@@ -287,7 +409,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
           else if (!userAnswer.includes(';')) errorMessage = 'ERROR: MISSING SEMICOLON (;)';
         }
       }
-      
+
       setFeedback({ type: 'error', message: errorMessage });
       setTimeout(() => setFeedback(null), 3000);
     }
@@ -299,7 +421,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
       setScore(prev => Math.max(0, prev - 5));
       setHintsUsed(prev => prev + 1);
       setHintsUsedForQuestion(prev => [...prev, currentQuestion.id]);
-      
+
       setTimeout(() => {
         setIsDecryptingHint(false);
       }, 1500);
@@ -317,10 +439,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
     // Check if unlocked: all previous questions must be completed
     const targetRound = GAME_DATA[rIdx];
     const targetQuestion = targetRound.questions[qIdx];
-    
+
     // Find absolute index of target
     let absoluteTargetIdx = 0;
-    for(let i=0; i<rIdx; i++) absoluteTargetIdx += GAME_DATA[i].questions.length;
+    for (let i = 0; i < rIdx; i++) absoluteTargetIdx += GAME_DATA[i].questions.length;
     absoluteTargetIdx += qIdx;
 
     if (completedQuestionIds.length >= absoluteTargetIdx) {
@@ -337,67 +459,126 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
       <div className="crt-overlay" />
       <div className="scanline" />
 
+      {/* Atmospheric Effects (Upgrade 2) */}
+      <div 
+        className="vignette-effect" 
+        style={{ opacity: Math.max(0, (100 - systemStatus.oxygen) / 100) }} 
+      />
+      {isGlitching && <div className="fixed inset-0 z-[100] terminal-static pointer-events-none glitch-active" />}
+
+      {/* Emergency Override Overlay (Upgrade 1) */}
+      <AnimatePresence>
+        {emergency && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center p-6 emergency-blur backdrop-blur-md"
+          >
+            <div className="w-full max-w-md tech-card p-8 border-destructive bg-black/90 shadow-[0_0_50px_rgba(255,0,0,0.3)] relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-1 bg-destructive animate-pulse" />
+              <div className="flex items-center gap-4 text-destructive mb-6">
+                <ShieldAlert className="w-8 h-8 animate-bounce" />
+                <div>
+                  <h2 className="text-xl font-black uppercase tracking-tighter italic">Emergency Override</h2>
+                  <p className="text-[10px] opacity-70 tracking-widest uppercase">{emergency.type}</p>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="p-4 bg-destructive/10 border border-destructive/20 text-center">
+                  <span className="text-[10px] uppercase tracking-[0.3em] opacity-50 block mb-2">Bypass Authorization Code</span>
+                  <span className="text-3xl font-black tracking-[0.5em] text-destructive">{emergency.code}</span>
+                </div>
+
+                <form onSubmit={handleEmergencySubmit} className="space-y-4">
+                  <Input
+                    placeholder="REPLICATE CODE TO BYPASS..."
+                    value={emergencyInput}
+                    onChange={(e) => setEmergencyInput(e.target.value.toUpperCase())}
+                    className="h-12 bg-black border-destructive text-destructive text-center text-xl font-black tracking-[0.5em] rounded-none focus:ring-destructive"
+                    autoFocus
+                  />
+                  <Button type="submit" className="w-full h-12 bg-destructive text-white font-black uppercase tracking-widest rounded-none hover:bg-destructive/80">
+                    Confirm Override
+                  </Button>
+                </form>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Critical Alert Overlay */}
       {activeAlert && (
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0 }}
-          animate={{ opacity: [0, 0.3, 0] }}
-          transition={{ duration: 0.5, repeat: Infinity }}
-          className="fixed inset-0 bg-destructive pointer-events-none z-50"
+          animate={{ opacity: [0, 0.5, 0] }}
+          transition={{ duration: 0.2, repeat: Infinity }}
+          className="fixed inset-0 bg-destructive/20 pointer-events-none z-50 border-[20px] border-destructive animate-pulse"
         />
       )}
 
       {/* Top Bar */}
-      <header className="h-16 border-b border-primary/20 bg-card/50 backdrop-blur-md flex items-center justify-between px-6 z-20">
-        <div className="flex items-center gap-4">
-          <div className="w-10 h-10 rounded-sm bg-primary/10 flex items-center justify-center border border-primary/30 shadow-[0_0_15px_rgba(0,255,128,0.1)]">
-            <Cpu className="w-6 h-6 text-primary animate-pulse" />
+      <header className="h-14 border-b-2 border-primary/20 bg-black/60 backdrop-blur-md flex items-center justify-between px-6 z-20">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-none bg-primary flex items-center justify-center border-2 border-black shadow-[0_0_10px_rgba(0,255,128,0.3)]">
+            <Cpu className="w-5 h-5 text-black animate-pulse" />
           </div>
-          <h1 className="text-2xl font-black tracking-[0.2em] text-primary italic neon-text font-heading">MISSION OVERRIDE</h1>
+          <h1 className="text-xl font-black tracking-[0.2em] text-primary italic neon-text font-heading uppercase">Mission Override</h1>
         </div>
 
         <div className="flex items-center gap-6">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsMuted(!isMuted)}
+            className="text-primary hover:bg-primary/10 border-2 border-primary/20 h-10 w-10 flex items-center justify-center p-0"
+          >
+            {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+          </Button>
+
           {userRole === 'admin' && (
-            <div className="flex items-center gap-4 mr-4 border-r border-primary/20 pr-4">
-              <Button 
-                variant="ghost" 
-                size="sm" 
+            <div className="flex items-center gap-4 mr-4 border-r-2 border-primary/20 pr-4">
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={onOpenAdmin}
-                className="text-accent hover:bg-accent/10 text-[10px] uppercase tracking-widest border border-accent/20 flex items-center gap-2"
+                className="text-accent hover:bg-accent/10 text-[9px] font-black uppercase tracking-[0.2em] border-2 border-accent/20 flex items-center gap-2 h-8 px-3"
               >
                 <LayoutDashboard className="w-3 h-3" />
-                Dashboard View
+                Command Deck
               </Button>
-              <div className="flex items-center gap-2 px-3 py-1 bg-accent/10 border border-accent/20 rounded-md">
-                <span className="text-[10px] font-bold text-accent uppercase tracking-widest">God Mode</span>
-                <input 
-                  type="checkbox" 
-                  checked={isGodMode} 
+              <div className="flex items-center gap-3 px-3 py-1 bg-background border-2 border-primary hazard-stripes rounded-none shadow-[2px_2px_0_0_rgba(0,0,0,0.5)]">
+                <span className="text-[9px] font-black text-black uppercase tracking-[0.2em]">God Mode</span>
+                <input
+                  type="checkbox"
+                  checked={isGodMode}
                   onChange={(e) => setIsGodMode(e.target.checked)}
-                  className="w-3 h-3 accent-accent cursor-pointer"
+                  className="toggle-switch scale-75 transform origin-right"
                 />
               </div>
-              <Button 
-                variant="ghost" 
-                size="sm" 
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={onExit}
-                className="text-destructive hover:bg-destructive/10 text-[10px] uppercase tracking-widest border border-destructive/20"
+                className="text-destructive hover:bg-destructive/10 text-[9px] font-black uppercase tracking-[0.2em] border-2 border-destructive/20 h-8 px-3"
               >
-                Terminate Mission
+                Abort Mission
               </Button>
             </div>
           )}
           <div className="flex flex-col items-end">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-widest">Time Remaining</span>
+            <span className="text-[8px] text-primary/40 font-black uppercase tracking-[0.3em]">Reactor Stability Time</span>
             <div className={`flex items-center gap-2 ${timeLeft < 300 ? 'text-destructive animate-pulse' : 'text-primary'}`}>
-              <Timer className="w-4 h-4" />
-              <span className="text-xl font-bold tabular-nums">{formatTime(timeLeft)}</span>
+              <Timer className="w-3 h-3" />
+              <span className="text-lg font-black tabular-nums tracking-tighter">{formatTime(timeLeft)}</span>
             </div>
           </div>
           <div className="h-8 w-px bg-primary/20" />
           <div className="flex flex-col items-end">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-widest">Mission Score</span>
-            <span className="text-xl font-bold text-accent">{score.toString().padStart(5, '0')}</span>
+            <span className="text-[8px] text-primary/40 font-black uppercase tracking-[0.3em]">Efficiency Rating</span>
+            <span className="text-lg font-black text-accent tabular-nums tracking-tighter">{score.toString().padStart(5, '0')}</span>
           </div>
         </div>
       </header>
@@ -405,49 +586,49 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
       {/* Main Content */}
       <div className="flex-1 flex min-h-0 z-10">
         {/* Left Panel: System Status */}
-        <aside className="w-72 border-r border-primary/10 bg-card/20 p-6 flex flex-col gap-10">
-          <div className="space-y-8">
-            <h3 className="text-[10px] font-black text-primary flex items-center gap-2 uppercase tracking-[0.2em]">
-              <Activity className="w-4 h-4" /> System Diagnostics
+        <aside className="w-72 border-r-2 border-primary/10 bg-black/20 p-6 flex flex-col gap-10">
+          <div className="space-y-6">
+            <h3 className="text-[9px] font-black text-primary flex items-center gap-3 uppercase tracking-[0.3em]">
+              <Activity className="w-4 h-4" /> Service Diagnostics
             </h3>
-            
+
             <div className="space-y-6">
-              <div className="space-y-3">
-                <div className="flex justify-between text-[9px] uppercase tracking-widest opacity-70">
-                  <span className="flex items-center gap-1"><Navigation className="w-3 h-3" /> Navigation</span>
-                  <span>{Math.round(systemStatus.navigation)}%</span>
+              <div className="space-y-2">
+                <div className="flex justify-between text-[8px] font-black uppercase tracking-[0.2em] opacity-50">
+                  <span className="flex items-center gap-2 italic"><Navigation className="w-2.5 h-2.5 text-blue-400" /> Thrusters</span>
+                  <span className="text-blue-400">{Math.round(systemStatus.navigation)}%</span>
                 </div>
-                <div className="h-1.5 bg-blue-500/10 rounded-full overflow-hidden border border-blue-500/20">
-                  <motion.div 
+                <div className="h-2 bg-black border-2 border-blue-500/20 p-0.5">
+                  <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${systemStatus.navigation}%` }}
-                    className="h-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]"
+                    className="h-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]"
                   />
                 </div>
               </div>
-              <div className="space-y-3">
-                <div className="flex justify-between text-[9px] uppercase tracking-widest opacity-70">
-                  <span className="flex items-center gap-1"><Wind className="w-3 h-3" /> Oxygen</span>
-                  <span className={systemStatus.oxygen < 30 ? 'text-destructive animate-pulse font-bold' : ''}>{Math.round(systemStatus.oxygen)}%</span>
+              <div className="space-y-2">
+                <div className="flex justify-between text-[8px] font-black uppercase tracking-[0.2em] opacity-50">
+                  <span className="flex items-center gap-2 italic"><Wind className="w-2.5 h-2.5 text-green-400" /> Ventilation</span>
+                  <span className={systemStatus.oxygen < 30 ? 'text-destructive animate-pulse' : 'text-green-400'}>{Math.round(systemStatus.oxygen)}%</span>
                 </div>
-                <div className={`h-1.5 rounded-full overflow-hidden border ${systemStatus.oxygen < 30 ? 'bg-destructive/10 border-destructive/20' : 'bg-primary/10 border-primary/20'}`}>
-                  <motion.div 
+                <div className={`h-2 bg-black border-2 p-0.5 ${systemStatus.oxygen < 30 ? 'border-destructive' : 'border-green-500/20'}`}>
+                  <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${systemStatus.oxygen}%` }}
-                    className={`h-full ${systemStatus.oxygen < 30 ? 'bg-destructive shadow-[0_0_10px_rgba(239,68,68,0.5)]' : 'bg-primary shadow-[0_0_10px_rgba(0,255,128,0.5)]'}`}
+                    className={`h-full shadow-[0_0_8px_rgba(34,197,94,0.5)] ${systemStatus.oxygen < 30 ? 'bg-destructive shadow-destructive/50' : 'bg-green-500'}`}
                   />
                 </div>
               </div>
-              <div className="space-y-3">
-                <div className="flex justify-between text-[9px] uppercase tracking-widest opacity-70">
-                  <span className="flex items-center gap-1"><Zap className="w-3 h-3" /> Fuel Reserve</span>
-                  <span>{Math.round(systemStatus.fuel)}%</span>
+              <div className="space-y-2">
+                <div className="flex justify-between text-[8px] font-black uppercase tracking-[0.2em] opacity-50">
+                  <span className="flex items-center gap-2 italic"><Zap className="w-2.5 h-2.5 text-accent" /> Fuel Pumps</span>
+                  <span className="text-accent">{Math.round(systemStatus.fuel)}%</span>
                 </div>
-                <div className="h-1.5 bg-accent/10 rounded-full overflow-hidden border border-accent/20">
-                  <motion.div 
+                <div className="h-2 bg-black border-2 border-accent/20 p-0.5">
+                  <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${systemStatus.fuel}%` }}
-                    className="h-full bg-accent shadow-[0_0_10px_rgba(0,255,255,0.5)]"
+                    className="h-full bg-accent shadow-[0_0_8px_rgba(255,165,0,0.5)]"
                   />
                 </div>
               </div>
@@ -455,36 +636,68 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
           </div>
 
           <div className="flex-1 flex flex-col gap-4 min-h-0">
-            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Mission Log</h3>
-            <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+            <h3 className="text-[9px] font-black text-primary/40 uppercase tracking-[0.3em]">System Output Log</h3>
+            <div className="flex-1 overflow-y-auto space-y-2 pr-3 custom-scrollbar font-mono text-[8px] font-bold">
               <AnimatePresence>
                 {activeAlert && (
-                  <motion.div 
+                  <motion.div
                     initial={{ x: -20, opacity: 0 }}
                     animate={{ x: 0, opacity: 1 }}
                     exit={{ x: -20, opacity: 0 }}
-                    className="p-2 bg-destructive/10 border border-destructive/30 rounded text-[10px] text-destructive flex items-center gap-2 animate-pulse"
+                    className="p-2 bg-destructive/10 border-l-2 border-destructive text-destructive flex items-center gap-2 animate-pulse"
                   >
-                    <AlertTriangle className="w-3 h-3" /> {activeAlert}
+                    <span className="flex-shrink-0">[ FAIL ]</span>
+                    <span className="uppercase tracking-widest">{activeAlert}</span>
                   </motion.div>
                 )}
               </AnimatePresence>
-              <div className="p-2 bg-primary/5 border border-primary/10 rounded text-[10px] text-primary/70 flex items-center gap-2">
-                <CheckCircle2 className="w-3 h-3" /> CORE STABILIZER: ACTIVE
+              <div className="p-2 bg-primary/5 border-l-2 border-primary text-primary flex items-center gap-2">
+                <span className="flex-shrink-0">[  OK  ]</span>
+                <span className="uppercase tracking-widest">Core Stabilizer: Nominal</span>
               </div>
-              <div className="p-2 bg-accent/5 border border-accent/10 rounded text-[10px] text-accent/70 flex items-center gap-2">
-                <Activity className="w-3 h-3" /> NEURAL LINK: STABLE
+              <div className="p-2 bg-primary/5 border-l-2 border-primary text-primary flex items-center gap-2">
+                <span className="flex-shrink-0">[  OK  ]</span>
+                <span className="uppercase tracking-widest">Neural Link: Established</span>
               </div>
-              <div className="p-2 bg-secondary/5 border border-secondary/10 rounded text-[10px] text-muted-foreground flex items-center justify-between">
-                <span>HINTS DECRYPTED</span>
-                <span>{hintsUsed}</span>
+              <div className="p-2 bg-accent/5 border-l-2 border-accent text-accent flex items-center justify-between group">
+                <div className="flex items-center gap-2">
+                  <span className="flex-shrink-0">[ INFO ]</span>
+                  <span className="uppercase tracking-widest">Decrypted Hints: {hintsUsed}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-auto space-y-3 pb-4">
+              <h3 className="text-[8px] font-black text-primary/40 uppercase tracking-[0.4em]">Maintenance Sub-routines</h3>
+              <div className="grid grid-cols-1 gap-2">
+                <button 
+                  onClick={() => handleMaintenance('oxygen')}
+                  className="maintenance-btn group"
+                >
+                  <span>Repair Ventilation</span>
+                  <Wind className="w-3 h-3 group-hover:rotate-12 transition-transform" />
+                </button>
+                <button 
+                  onClick={() => handleMaintenance('fuel')}
+                  className="maintenance-btn group"
+                >
+                   <span>Stabilize Fuel</span>
+                   <Zap className="w-3 h-3 group-hover:scale-125 transition-transform" />
+                </button>
+                <button 
+                  onClick={() => handleMaintenance('navigation')}
+                  className="maintenance-btn group"
+                >
+                  <span>Adjust Thrusters</span>
+                  <Navigation className="w-3 h-3 group-hover:-translate-y-1 transition-transform" />
+                </button>
               </div>
             </div>
           </div>
         </aside>
 
         {/* Center Panel: Active Question */}
-        <main className="flex-1 p-8 flex flex-col gap-6 min-w-0">
+        <main className="flex-1 p-6 flex flex-col gap-6 min-w-0">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentQuestion.id}
@@ -493,104 +706,104 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
               exit={{ y: -20, opacity: 0 }}
               className="flex-1 flex flex-col min-h-0"
             >
-              <Card className="dashboard-panel border-none flex-1 flex flex-col overflow-hidden">
-                <CardHeader className="border-b border-primary/10 bg-primary/5 p-8">
+              <Card className="dashboard-panel border-none flex-1 flex flex-col overflow-hidden bg-black/40 shadow-[0_0_100px_rgba(0,0,0,0.5)]">
+                <CardHeader className="border-b-2 border-primary/10 bg-primary/5 p-6 md:p-8">
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-6">
-                      <div className="w-14 h-14 rounded-sm bg-primary/10 flex items-center justify-center border border-primary/30 shadow-[0_0_20px_rgba(0,255,128,0.2)]">
-                        <Terminal className="w-8 h-8 text-primary" />
+                      <div className="w-12 h-12 rounded-none bg-primary/10 flex items-center justify-center border-2 border-primary/40 shadow-[0_0_20px_rgba(0,255,128,0.1)] relative">
+                        <Terminal className="w-6 h-6 text-primary" />
                       </div>
                       <div>
-                        <CardTitle className="text-3xl text-primary uppercase tracking-tighter italic font-heading neon-text">{currentQuestion.title}</CardTitle>
+                        <CardTitle className="text-2xl text-primary font-black uppercase tracking-tight italic font-heading neon-text">{currentQuestion.title}</CardTitle>
                         <div className="flex items-center gap-3 mt-2">
-                          <Badge variant="outline" className="text-[9px] border-primary/30 text-primary/70 uppercase tracking-widest bg-primary/5">Round {currentRound.id}</Badge>
-                          <Badge variant="outline" className="text-[9px] border-accent/30 text-accent/70 uppercase tracking-widest bg-accent/5">Question {currentQuestionIdx + 1}</Badge>
+                          <Badge variant="outline" className="text-[9px] font-black border-primary/30 text-primary/70 uppercase tracking-widest bg-primary/5 rounded-none px-3 py-0.5">SEC_Round_{currentRound.id}</Badge>
+                          <Badge variant="outline" className="text-[9px] font-black border-accent/40 text-accent/70 uppercase tracking-widest bg-accent/5 rounded-none px-3 py-0.5">QUES_{currentQuestionIdx + 1}</Badge>
                         </div>
                       </div>
                     </div>
                     {completedQuestionIds.includes(currentQuestion.id) && (
-                      <Badge className="bg-primary/20 text-primary border-primary/30 uppercase text-[10px] px-3 py-1">
-                        <CheckCircle className="w-3 h-3 mr-2" /> Completed
-                      </Badge>
+                      <div className="animate-pulse bg-primary/20 text-primary border-2 border-primary/40 uppercase text-[9px] font-black px-4 py-1.5 flex items-center gap-2">
+                        <CheckCircle className="w-3.5 h-3.5" /> Subsystem Secured
+                      </div>
                     )}
                   </div>
                 </CardHeader>
-                
+
                 <CardContent className="p-6 md:p-8 flex flex-col gap-6 md:gap-8 overflow-y-auto">
-                  <div className="text-xl md:text-2xl leading-relaxed text-foreground/90 font-light tracking-wide">
+                  <div className="text-lg md:text-xl leading-relaxed text-primary/80 font-bold tracking-tight border-l-4 border-primary/20 pl-6">
                     {currentQuestion.description}
                   </div>
 
                   {currentQuestion.code && (
-                    <div className="bg-black/60 p-6 rounded-sm border border-primary/20 font-mono text-sm text-primary/80 relative group shadow-inner min-h-[120px] flex flex-col">
-                      <div className="absolute top-0 left-0 w-1 h-full bg-primary/40 shadow-[0_0_10px_rgba(0,255,128,0.5)]" />
-                      <div className="absolute top-2 right-4 text-[9px] text-primary/40 uppercase tracking-[0.3em] font-bold">Secure Buffer // Read-Only</div>
-                      <pre className="whitespace-pre-wrap leading-relaxed mt-6 mb-2">{currentQuestion.code}</pre>
+                    <div className="bg-black/80 p-6 border-2 border-primary/20 font-mono text-xs text-primary relative group shadow-[inset_0_0_40px_rgba(0,0,0,1)] min-h-[120px] flex flex-col">
+                      <div className="absolute top-0 left-0 w-1 h-full bg-primary/40 shadow-[0_0_15px_rgba(0,255,128,0.5)]" />
+                      <div className="absolute top-2 right-4 text-[8px] text-primary/30 uppercase tracking-[0.4em] font-black italic">Read_Only_Memory // Segment_0x{currentQuestion.id.substring(0,2)}</div>
+                      <pre className="whitespace-pre-wrap leading-tight mt-6 mb-2 font-black">{currentQuestion.code}</pre>
                     </div>
                   )}
 
                   <div className="mt-auto space-y-6">
                     <form onSubmit={handleSubmit} className="space-y-6">
-                      <div className="flex flex-col md:flex-row gap-4">
+                      <div className="flex flex-col xl:flex-row gap-4">
                         <div className="flex-1 relative">
+                          <div className="absolute -top-3 left-4 px-2 bg-background z-10 text-[8px] font-black text-primary/40 uppercase tracking-[0.4em]">Input_Buffer_Stream</div>
                           {currentQuestion.type === 'code' ? (
                             <Textarea
-                              placeholder="WRITE YOUR CODE HERE..."
+                              placeholder="COMPILE OVERRIDE LOGIC..."
                               value={answer}
                               onChange={(e) => setAnswer(e.target.value)}
                               disabled={timeLeft === 0}
-                              className="bg-black/40 border-primary/30 focus:border-primary text-primary min-h-[120px] text-lg font-mono tracking-wider placeholder:text-primary/10 rounded-sm resize-none"
+                              className="bg-black/60 border-2 border-primary/30 focus:border-primary text-primary min-h-[120px] text-lg font-mono tracking-wider placeholder:text-primary/10 rounded-none resize-none shadow-[inset_0_0_20px_rgba(0,0,0,1)] p-4"
                               autoFocus
                             />
                           ) : (
                             <Input
-                              placeholder="ENTER OVERRIDE CODE..."
+                              placeholder="ENTER BYPASS CODE..."
                               value={answer}
                               onChange={(e) => setAnswer(e.target.value)}
                               disabled={timeLeft === 0}
-                              className="bg-black/40 border-primary/30 focus:border-primary text-primary h-14 text-xl md:text-2xl uppercase tracking-[0.3em] font-black placeholder:text-primary/10 rounded-sm"
+                              className="bg-black/60 border-2 border-primary/30 focus:border-primary text-primary h-14 text-xl md:text-2xl uppercase tracking-[0.3em] font-black placeholder:text-primary/10 rounded-none shadow-[inset_0_0_20px_rgba(0,0,0,1)] px-6"
                               autoFocus
                             />
                           )}
                           <AnimatePresence>
                             {feedback && (
-                              <motion.div 
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
+                              <motion.div
+                                initial={{ opacity: 0, x: -10 }}
+                                animate={{ opacity: 1, x: 0 }}
                                 exit={{ opacity: 0 }}
-                                className={`absolute -top-10 left-0 text-sm font-bold px-3 py-1 rounded border ${
-                                  feedback.type === 'success' 
-                                    ? 'text-primary border-primary/30 bg-primary/10' 
-                                    : 'text-destructive border-destructive/30 bg-destructive/10'
-                                }`}
+                                className={`absolute -top-10 right-0 text-[8px] font-black px-4 py-1.5 border-2 shadow-lg tracking-[0.2em] ${feedback.type === 'success'
+                                    ? 'text-black border-primary bg-primary'
+                                    : 'text-white border-destructive bg-destructive animate-bounce'
+                                  }`}
                               >
-                                {feedback.message}
+                                [ {feedback.message} ]
                               </motion.div>
                             )}
                           </AnimatePresence>
                         </div>
                         <div className="flex gap-2">
                           {canGoBack && (
-                            <Button 
+                            <Button
                               type="button"
                               onClick={handlePrevious}
                               variant="outline"
-                              className="h-16 px-6 border-primary/30 text-primary hover:bg-primary/10"
+                              className="h-14 px-6 border-2 border-primary/30 text-primary hover:bg-primary/10 rounded-none transition-all active:translate-y-1"
                             >
                               <ChevronLeft className="w-6 h-6" />
                             </Button>
                           )}
-                          <Button 
-                            type="submit" 
+                          <Button
+                            type="submit"
                             disabled={timeLeft === 0}
-                            className="tech-button h-16 px-12 text-xl font-black uppercase tracking-[0.2em] text-primary-foreground flex-1"
+                            className="tech-button h-14 px-12 text-xl font-black uppercase tracking-[0.2em] flex-1 shadow-[4px_4px_0_0_rgba(0,0,0,1)] hover:shadow-[6px_6px_0_0_rgba(0,0,0,1)] active:shadow-none bg-primary text-black"
                           >
-                            Override <ChevronRight className="w-6 h-6 ml-2" />
+                            Bypass <ChevronRight className="w-6 h-6 ml-2" />
                           </Button>
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between pt-4 border-t-2 border-primary/10">
                         <div className="flex items-center gap-4">
                           <Button
                             type="button"
@@ -598,32 +811,35 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
                             size="sm"
                             disabled={hintsUsedForQuestion.includes(currentQuestion.id) || isDecryptingHint || timeLeft === 0}
                             onClick={handleHint}
-                            className="text-muted-foreground hover:text-accent hover:bg-accent/5 text-[10px] uppercase tracking-[0.2em] disabled:opacity-50 h-12 px-6 border border-transparent hover:border-accent/30 rounded-sm transition-all"
+                            className="text-primary/30 hover:text-accent hover:bg-accent/10 text-[9px] font-black uppercase tracking-[0.2em] disabled:opacity-50 h-10 px-6 border-2 border-transparent hover:border-accent/30 rounded-none transition-all"
                           >
-                            <HelpCircle className="w-4 h-4 mr-3" /> 
-                            {hintsUsedForQuestion.includes(currentQuestion.id) ? 'Hint Decrypted' : isDecryptingHint ? 'Decrypting...' : 'Request Hint (-5 pts)'}
+                            <HelpCircle className="w-4 h-4 mr-3" />
+                            {hintsUsedForQuestion.includes(currentQuestion.id) ? 'Information Decrypted' : isDecryptingHint ? 'Bypassing Encryption...' : 'Request Subsystem Hint'}
                           </Button>
-                          
+
                           {isDecryptingHint && (
-                            <div className="w-32 h-1 bg-accent/10 rounded-full overflow-hidden border border-accent/20">
-                              <motion.div 
+                            <div className="w-32 h-1.5 bg-black border-2 border-accent/20 overflow-hidden relative">
+                              <motion.div
                                 initial={{ x: "-100%" }}
                                 animate={{ x: "100%" }}
                                 transition={{ duration: 1.2, repeat: Infinity, ease: "linear" }}
-                                className="w-full h-full bg-accent shadow-[0_0_10px_rgba(0,255,255,0.8)]"
+                                className="w-full h-full bg-accent"
                               />
                             </div>
                           )}
                         </div>
-                        
+
                         {hintsUsedForQuestion.includes(currentQuestion.id) && !isDecryptingHint && (
-                          <motion.div 
+                          <motion.div
                             initial={{ opacity: 0, x: 20 }}
                             animate={{ opacity: 1, x: 0 }}
-                            className="text-xs text-accent bg-accent/5 px-5 py-3 border border-accent/30 rounded-sm uppercase font-mono italic flex items-center gap-3 shadow-[0_0_15px_rgba(0,255,255,0.05)]"
+                            className="bg-accent text-black px-4 py-2 border-2 border-black font-mono font-black italic flex items-center gap-3 shadow-[4px_4px_0_0_rgba(0,0,0,1)]"
                           >
-                            <Unlock className="w-4 h-4" />
-                            <span className="text-white/30 mr-1 font-bold">DECRYPTED:</span> {currentQuestion.hint}
+                            <Unlock className="w-4 h-4 flex-shrink-0" />
+                            <div className="flex flex-col">
+                              <span className="text-[7px] uppercase tracking-[0.4em] opacity-60 leading-none mb-0.5">Decrypted_Intel</span>
+                              <span className="text-[10px] uppercase tracking-wider">{currentQuestion.hint}</span>
+                            </div>
                           </motion.div>
                         )}
                       </div>
@@ -636,26 +852,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
         </main>
 
         {/* Right Panel: Question List */}
-        <aside className="w-80 border-l border-primary/10 bg-card/30 p-6 flex flex-col gap-6">
-          <h3 className="text-xs font-bold text-primary flex items-center gap-2 uppercase tracking-widest">
-            <Terminal className="w-4 h-4" /> Mission Manifest
+        <aside className="w-72 border-l-2 border-primary/10 bg-black/30 p-6 flex flex-col gap-8">
+          <h3 className="text-[9px] font-black text-primary flex items-center gap-3 uppercase tracking-[0.3em]">
+            <Terminal className="w-4 h-4" /> Ship Manifest
           </h3>
 
-          <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-6">
+          <div className="flex-1 overflow-y-auto pr-3 custom-scrollbar space-y-8">
             {GAME_DATA.map((round, rIdx) => (
               <div key={round.id} className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Round {round.id}</span>
+                  <span className="text-[8px] font-black text-primary/30 uppercase tracking-[0.3em]">Module_{round.id.toString().padStart(2, '0')}</span>
                   <div className="flex-1 h-px bg-primary/10" />
                 </div>
                 <div className="grid grid-cols-1 gap-2">
                   {round.questions.map((q, qIdx) => {
                     const isCompleted = completedQuestionIds.includes(q.id);
                     const isActive = currentRoundIdx === rIdx && currentQuestionIdx === qIdx;
-                    
+
                     // Unlock logic: first question or previous is completed
                     let absoluteIdx = 0;
-                    for(let i=0; i<rIdx; i++) absoluteIdx += GAME_DATA[i].questions.length;
+                    for (let i = 0; i < rIdx; i++) absoluteIdx += GAME_DATA[i].questions.length;
                     absoluteIdx += qIdx;
                     const isUnlocked = completedQuestionIds.length >= absoluteIdx;
 
@@ -665,28 +881,36 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
                         disabled={!isUnlocked}
                         onClick={() => selectQuestion(rIdx, qIdx)}
                         className={`
-                          group flex items-center justify-between p-3 rounded border transition-all text-left
-                          ${isActive ? 'bg-primary/10 border-primary/50 shadow-[0_0_10px_rgba(0,255,128,0.1)]' : 'bg-card/50 border-primary/10'}
-                          ${!isUnlocked ? 'opacity-40 cursor-not-allowed' : 'hover:border-primary/30'}
+                          group flex items-center justify-between p-3 border-2 transition-all text-left relative overflow-hidden
+                          ${isActive 
+                            ? 'bg-primary/10 border-primary shadow-[inset_0_0_10px_rgba(0,255,128,0.1)] translate-x-1' 
+                            : isUnlocked 
+                              ? 'bg-black/40 border-primary/10 hover:border-primary/30' 
+                              : 'bg-black/20 border-white/5 opacity-40 cursor-not-allowed'}
                         `}
                       >
+                        {isActive && <div className="absolute left-0 top-0 w-1 h-full bg-primary" />}
                         <div className="flex items-center gap-3">
                           <div className={`
-                            w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold
-                            ${isCompleted ? 'bg-primary text-primary-foreground' : isActive ? 'bg-primary/20 text-primary' : 'bg-secondary text-muted-foreground'}
+                            w-6 h-6 flex items-center justify-center text-[9px] font-black
+                            ${isCompleted 
+                              ? 'bg-primary text-black' 
+                              : isActive 
+                                ? 'bg-primary/20 text-primary border-2 border-primary' 
+                                : 'bg-black border-2 border-white/10 text-white/20'}
                           `}>
-                            {isCompleted ? <CheckCircle className="w-3 h-3" /> : qIdx + 1}
+                            {isCompleted ? <CheckCircle className="w-3.5 h-3.5" /> : (qIdx + 1).toString().padStart(2, '0')}
                           </div>
-                          <span className={`text-[10px] font-medium uppercase truncate max-w-[120px] ${isActive ? 'text-primary' : 'text-foreground/70'}`}>
+                          <span className={`text-[9px] font-black uppercase tracking-wider truncate max-w-[110px] ${isActive ? 'text-primary' : 'text-white/30'}`}>
                             {q.title}
                           </span>
                         </div>
                         {!isUnlocked ? (
-                          <Lock className="w-3 h-3 text-muted-foreground" />
+                          <Lock className="w-2.5 h-2.5 text-white/10" />
                         ) : isCompleted ? (
-                          <CheckCircle className="w-3 h-3 text-primary" />
+                          <div className="w-1.5 h-1.5 bg-primary shadow-[0_0_4px_rgba(0,255,128,1)] rounded-full" />
                         ) : (
-                          <Unlock className="w-3 h-3 text-accent opacity-0 group-hover:opacity-100 transition-opacity" />
+                          <div className="w-1.5 h-1.5 bg-white/5 rounded-full group-hover:bg-primary/20" />
                         )}
                       </button>
                     );
@@ -698,22 +922,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ onComplete, onExit, onOpen
         </aside>
       </div>
 
-      {/* Bottom Progress Bar */}
-      <footer className="h-12 border-t border-primary/20 bg-card/50 backdrop-blur-md flex items-center px-6 gap-6 z-20">
-        <div className="flex items-center gap-3 min-w-[150px]">
-          <span className="text-[10px] text-muted-foreground uppercase tracking-widest">Mission Progress</span>
-          <span className="text-xs font-bold text-primary">{Math.round(progress)}%</span>
+      {/* Heavy Industrial Footer */}
+      <footer className="h-12 border-t-2 border-primary/20 bg-black flex items-center px-6 gap-8 z-20">
+        <div className="flex items-center gap-3 min-w-[180px]">
+          <span className="text-[9px] font-black text-primary/40 uppercase tracking-[0.2em]">Mission Integrity</span>
+          <span className="text-xs font-black text-primary tabular-nums">{Math.round(progress)}%</span>
         </div>
-        <div className="flex-1">
-          <Progress value={progress} className="h-1.5 bg-secondary/30" />
-        </div>
-        <div className="flex items-center gap-6 text-[8px] text-muted-foreground uppercase tracking-widest opacity-50">
-          <div className="flex gap-4">
-            <span>COMMS: ENCRYPTED</span>
-            <span>LATENCY: 12ms</span>
-            <span>ENCRYPTION: AES-256</span>
+        <div className="flex-1 flex items-center gap-4">
+          <div className="flex-1 h-2 bg-black border-2 border-primary/10 p-0.5 relative overflow-hidden">
+            <motion.div 
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              className="h-full bg-primary shadow-[0_0_15px_rgba(0,255,128,0.2)] relative"
+            >
+              <div className="absolute right-0 top-0 w-1 h-full bg-white shadow-[0_0_8px_white]" />
+            </motion.div>
           </div>
-          <div>PROPERTY OF SPACE COMMAND</div>
+        </div>
+        <div className="flex items-center gap-8 text-[8px] font-black text-primary/10 uppercase tracking-[0.4em]">
+          <div className="flex gap-6 hidden xl:flex">
+            <span>Link: OK</span>
+            <span>Sync: 100%</span>
+            <span>AIS-OS v4.2.0</span>
+          </div>
+          <div className="italic text-primary/20">USCSS AEGIS // SEC_7G</div>
         </div>
       </footer>
     </div>
