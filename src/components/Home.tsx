@@ -47,9 +47,22 @@ interface HomeProps {
   onOpenAdmin: () => void;
   user: User | null;
   userRole: 'admin' | 'user' | null;
+  firebaseError?: string | null;
+  onShowTeamLogin?: () => void;
+  onLogout?: () => void;
+  authMethod?: 'firebase' | 'team' | null;
 }
 
-export const Home: React.FC<HomeProps> = ({ onStart, onOpenAdmin, user, userRole }) => {
+export const Home: React.FC<HomeProps> = ({ 
+  onStart, 
+  onOpenAdmin, 
+  user, 
+  userRole, 
+  firebaseError,
+  onShowTeamLogin,
+  onLogout: onAppLogout,
+  authMethod
+}) => {
   const [leaderboard, setLeaderboard] = useState<ScoreRecord[]>([]);
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(true);
 
@@ -65,8 +78,29 @@ export const Home: React.FC<HomeProps> = ({ onStart, onOpenAdmin, user, userRole
       setLeaderboard(records);
     } catch (error) {
       console.error("Failed to fetch leaderboard:", error);
+      // Load from localStorage fallback
+      loadLocalScores();
     } finally {
       setLoadingLeaderboard(false);
+    }
+  };
+
+  const loadLocalScores = () => {
+    try {
+      const localScores = JSON.parse(localStorage.getItem('local_scores') || '[]');
+      const records: ScoreRecord[] = localScores
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5)
+        .map((score: any, idx: number) => ({
+          id: `local_${idx}`,
+          userName: score.playerName,
+          score: score.score,
+          timeTaken: score.timeTaken,
+          timestamp: { toDate: () => new Date(score.timestamp) } as any
+        }));
+      setLeaderboard(records);
+    } catch {
+      setLeaderboard([]);
     }
   };
 
@@ -75,15 +109,26 @@ export const Home: React.FC<HomeProps> = ({ onStart, onOpenAdmin, user, userRole
   }, []);
 
   const handleLogin = async () => {
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error("Login failed:", error);
+    if (firebaseError) {
+      // Firebase is down, show team login instead
+      onShowTeamLogin?.();
+    } else {
+      try {
+        await signInWithPopup(auth, googleProvider);
+      } catch (error) {
+        console.error("Login failed:", error);
+        // Fallback to team login if Google signin fails
+        onShowTeamLogin?.();
+      }
     }
   };
 
   const handleLogout = async () => {
-    await signOut(auth);
+    if (authMethod === 'team') {
+      onAppLogout?.();
+    } else {
+      await signOut(auth);
+    }
   };
 
   const containerVariants = {
@@ -104,20 +149,38 @@ export const Home: React.FC<HomeProps> = ({ onStart, onOpenAdmin, user, userRole
           <ProfileIcon className="w-full h-full text-white/40" />
         </div>
         <div className="text-left font-mono">
-          <div className="text-[10px] text-white/80 font-black uppercase tracking-widest">{user?.displayName || 'NIKHIL MANVI'}</div>
+          <div className="text-[10px] text-white/80 font-black uppercase tracking-widest">
+            {user?.displayName || 'NIKHIL MANVI'}
+            {authMethod === 'team' && ' [TEAM]'}
+          </div>
           <div className="text-[8px] text-white/30 uppercase tracking-[0.2em]">@ {userRole || 'ADMIN'}</div>
         </div>
       </div>
 
       {/* Auth Control (Top Right) */}
-      <div className="absolute top-8 right-8 z-50">
+      <div className="absolute top-8 right-8 z-50 flex gap-2">
         {user ? (
-          <Button variant="ghost" size="icon" onClick={handleLogout} className="text-white/20 hover:text-destructive transition-colors">
-            <LogOut className="w-5 h-5" />
-          </Button>
+          <>
+            {authMethod === 'team' && (
+              <div className="text-[8px] text-orange-400/70 px-2 py-1 border border-orange-400/30 rounded">
+                FALLBACK MODE
+              </div>
+            )}
+            <Button variant="ghost" size="icon" onClick={handleLogout} className="text-white/20 hover:text-destructive transition-colors">
+              <LogOut className="w-5 h-5" />
+            </Button>
+          </>
         ) : (
-          <Button onClick={handleLogin} variant="outline" className="border-primary/40 text-primary uppercase text-[10px] tracking-widest h-10 px-6 bg-black/40">
-            Initialize
+          <Button 
+            onClick={handleLogin} 
+            variant="outline" 
+            className={`uppercase text-[10px] tracking-widest h-10 px-6 bg-black/40 ${
+              firebaseError 
+                ? 'border-orange-400/40 text-orange-400' 
+                : 'border-primary/40 text-primary'
+            }`}
+          >
+            {firebaseError ? 'Team Access' : 'Initialize'}
           </Button>
         )}
       </div>
