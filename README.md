@@ -116,31 +116,35 @@ Leaderboard
 
 ## 🚀 Landing Page
 
-<img src="screenshots/landing-page.png" width="900"/>
+<img width="1920" height="1200" alt="Screenshot 2026-07-08 214950" src="https://github.com/user-attachments/assets/1d6d713e-4e0a-46dc-acef-af8e5b7c383d" />
+
 
 The introduction screen presents the emergency aboard the USCSS Aegis and prepares players for the mission.
 
 ## 🛰️ Mission Selection
 
-<img src="screenshots/mission-selection.png" width="900"/>
+<img width="1920" height="1200" alt="Screenshot 2026-07-08 215027" src="https://github.com/user-attachments/assets/072d0fa1-1a0d-4cd8-817b-693366b2ed52" />
+
 
 Players choose engineering tasks and progress through the storyline.
 
 ## 💻 Gameplay
 
-<img src="screenshots/gameplay.png" width="900"/>
+<img width="1920" height="1200" alt="Screenshot 2026-05-08 100625" src="https://github.com/user-attachments/assets/61866b06-8238-4239-b974-5a4df2f87107" />
+
 
 The core interface where users solve programming challenges while tracking progress and remaining time.
 
 ## 🏆 Mission Complete
 
-<img src="screenshots/success-screen.png" width="900"/>
+<img width="1920" height="1200" alt="Screenshot 2026-07-08 215123" src="https://github.com/user-attachments/assets/a78a0a6a-e87c-401b-ad03-a6c246c952b0" />
+
 
 Displays mission statistics, score and completion status.
 
 ## 📊 Admin Dashboard
 
-<img src="screenshots/admin-dashboard.png" width="900"/>
+<img width="1920" height="1200" alt="Screenshot 2026-07-08 215149" src="https://github.com/user-attachments/assets/61b1edf0-241c-4276-9798-967508b0fc49" />
 
 Allows organizers to monitor participants and event analytics.
 
