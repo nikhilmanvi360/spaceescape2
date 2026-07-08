@@ -254,7 +254,7 @@ Mission Override demonstrates:
 Add screenshots in a `screenshots/` folder and embed them:
 
 ```md
-![Landing](screenshots/landing.png)
+"C:\Users\Nikhil\Pictures\Screenshots\Screenshot 2026-07-08 215149.png"
 
 ![Mission](screenshots/mission.png)
 
