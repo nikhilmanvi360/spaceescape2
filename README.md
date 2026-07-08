@@ -95,10 +95,14 @@ Failure means total mission loss.
 ## Landing Page
 
 Introduces the mission with the engineering failure scenario.
+<img width="1920" height="1200" alt="Screenshot 2026-07-08 214950" src="https://github.com/user-attachments/assets/7785fd82-c54f-4095-a86b-367f5396d67f" />
 
 ## Mission Selection
 
 Choose from available engineering tasks.
+<img width="1920" height="1200" alt="Screenshot 2026-07-08 215027" src="https://github.com/user-attachments/assets/292a8c6a-f486-40ae-8270-3dae4d5cda76" />
+<img width="1920" height="1200" alt="Screenshot 2026-07-08 215123" src="https://github.com/user-attachments/assets/20025c1d-1efc-4ef4-bd0f-71472c91eea1" />
+<img width="1920" height="1200" alt="Screenshot 2026-07-08 215149" src="https://github.com/user-attachments/assets/aeb61c73-9b97-4742-bbbc-dd794be7a181" />
 
 Examples:
 
@@ -249,21 +253,7 @@ Mission Override demonstrates:
 
 ---
 
-# 📸 Suggested Screenshots
 
-Add screenshots in a `screenshots/` folder and embed them:
-
-```md
-"C:\Users\Nikhil\Pictures\Screenshots\Screenshot 2026-07-08 215149.png"
-
-![Mission](screenshots/mission.png)
-
-![Success](screenshots/success.png)
-
-![Dashboard](screenshots/dashboard.png)
-```
-
----
 
 # 💡 Challenges Solved
 
